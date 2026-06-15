@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+import httpx
+
 from liaison.config import Settings, get_settings
 from liaison.logging import get_logger
 from liaison.observability import METRICS, record_span
@@ -61,6 +63,35 @@ class FailingProvider:
         raise LLMProviderError(f"provider {self.model} indisponible")
 
 
+class HttpLLMProvider:
+    """Provider HTTP compatible chat completions (LiteLLM/OpenAI, frontant Bedrock en prod).
+
+    Le client HTTP est injecte pour permettre les tests sans reseau (httpx.MockTransport).
+    """
+
+    def __init__(self, model: str, client: httpx.Client, path: str = "/chat/completions") -> None:
+        self.model = model
+        self._client = client
+        self._path = path
+
+    def complete(self, request: LLMRequest) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [{"role": m.role.value, "content": m.content} for m in request.messages],
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
+        }
+        try:
+            response = self._client.post(self._path, json=payload)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise LLMProviderError(f"appel LLM {self.model} echoue: {exc}") from exc
+        try:
+            return str(response.json()["choices"][0]["message"]["content"])
+        except (KeyError, IndexError, ValueError) as exc:
+            raise LLMProviderError(f"reponse LLM {self.model} invalide: {exc}") from exc
+
+
 class LLMGateway:
     """Route les requetes vers le provider primaire, bascule sur le secondaire en cas d'echec."""
 
@@ -85,10 +116,30 @@ class LLMGateway:
             return LLMResponse(content=content, model=self._fallback.model, used_fallback=True)
 
 
-def build_default_gateway(settings: Settings | None = None) -> LLMGateway:
-    """Construit un gateway local a partir de la configuration (mode hors-ligne)."""
+def _build_http_client(cfg: Settings) -> httpx.Client:
+    """Construit le client HTTP du provider LLM (base URL + cle d'API)."""
+    headers = {"Authorization": f"Bearer {cfg.llm_api_key}"} if cfg.llm_api_key else {}
+    return httpx.Client(base_url=cfg.llm_api_base, headers=headers, timeout=30.0)
+
+
+def build_default_gateway(
+    settings: Settings | None = None,
+    http_client: httpx.Client | None = None,
+) -> LLMGateway:
+    """Construit le gateway selon la configuration.
+
+    Si ``llm_api_base`` est renseigne, utilise un provider HTTP reel (primaire + fallback) ;
+    sinon, retombe sur ``LocalProvider`` deterministe pour fonctionner hors-ligne. Le client
+    HTTP peut etre injecte (tests).
+    """
     cfg = settings or get_settings()
+    if not cfg.llm_api_base:
+        return LLMGateway(
+            primary=LocalProvider(model=cfg.llm_model_primary),
+            fallback=LocalProvider(model=cfg.llm_model_fallback),
+        )
+    client = http_client or _build_http_client(cfg)
     return LLMGateway(
-        primary=LocalProvider(model=cfg.llm_model_primary),
-        fallback=LocalProvider(model=cfg.llm_model_fallback),
+        primary=HttpLLMProvider(model=cfg.llm_model_primary, client=client),
+        fallback=HttpLLMProvider(model=cfg.llm_model_fallback, client=client),
     )
