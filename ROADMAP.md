@@ -14,7 +14,8 @@
 - [x] CI/CD, Docker Compose, couverture >= 80 %
 
 ## Next — industrialisation
-- [ ] Provider LLM Bedrock/LiteLLM reel (remplace `LocalProvider`)
+- [x] Provider LLM HTTP reel (LiteLLM/OpenAI, frontant Bedrock) + selection auto
+- [x] Orchestration multi-source reelle (SQL + API + GED) + extraction d'entite
 - [ ] Retriever Qdrant (embeddings + reranking) en production
 - [ ] Planificateur LLM (LangGraph) en remplacement du routage par mots-cles
 - [ ] Serveur MCP (transport stdio/SSE) au-dessus du registre
