@@ -12,8 +12,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from liaison.gateway import LLMGateway
+from liaison.logging import get_logger
 from liaison.observability import METRICS, record_span
-from liaison.schemas import AnswerResponse, Evidence, LLMRequest, Message, Role
+from liaison.schemas import AnswerResponse, Evidence, LLMRequest, Message, Role, SourceKind
+
+logger = get_logger(__name__)
 
 ToolRunner = Callable[[str], Evidence]
 
@@ -26,6 +29,7 @@ class Tool:
     description: str
     keywords: frozenset[str]
     runner: ToolRunner
+    source_kind: SourceKind = SourceKind.SQL
 
 
 class Router:
@@ -71,12 +75,23 @@ class Orchestrator:
             used_fallback=completion.used_fallback,
         )
 
+    def _run_tool(self, tool: Tool, question: str) -> Evidence:
+        """Execute un outil ; en cas d'echec, retourne une evidence degradee (resilience)."""
+        try:
+            with record_span("orchestrator.tool", tool=tool.name):
+                return tool.runner(question)
+        except Exception as exc:  # noqa: BLE001 - frontiere de resilience de l'orchestrateur
+            METRICS.incr("orchestrator.tool_error")
+            logger.warning("tool_failed", tool=tool.name, error=str(exc))
+            return Evidence(
+                kind=tool.source_kind,
+                summary=f"connecteur {tool.name} indisponible",
+                payload={"error": str(exc)},
+            )
+
     def run(self, question: str) -> AnswerResponse:
         """Execute le pipeline complet pour une question metier."""
         tools = self._router.select(question)
         METRICS.incr("orchestrator.runs")
-        evidence: list[Evidence] = []
-        for tool in tools:
-            with record_span("orchestrator.tool", tool=tool.name):
-                evidence.append(tool.runner(question))
+        evidence = [self._run_tool(tool, question) for tool in tools]
         return self._synthesize(question, evidence)
