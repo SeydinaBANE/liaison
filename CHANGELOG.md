@@ -15,5 +15,8 @@ versionnage [SemVer](https://semver.org/lang/fr/).
 - Couche gouvernance : RBAC, masquage PII, idempotence, journal d'audit.
 - Exposition MCP des connecteurs (registre d'outils + dispatch).
 - API chat REST + SSE sous controle RBAC, composition root demo en-process.
+- Provider LLM HTTP reel (LiteLLM/OpenAI, frontant Bedrock) avec selection auto et repli local.
+- Orchestration croisant 3 sources (SQL + API + GED) avec extraction d'entite (n° client).
+- Opt-in Node 24 pour les actions CI (depreciation Node 20).
 
 [Unreleased]: https://github.com/SeydinaBANE/liaison/compare/main...develop

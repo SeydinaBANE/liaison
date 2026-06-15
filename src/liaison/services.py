@@ -7,14 +7,20 @@ et un retriever Qdrant.
 
 from __future__ import annotations
 
+import httpx
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from liaison.config import get_settings
+from liaison.connectors.api import ApiConnector
 from liaison.connectors.docs import DocsConnector, Document, InMemoryRetriever
 from liaison.connectors.sql import SemanticLayer, SqlConnector, TableSchema
+from liaison.entities import extract_customer_id
 from liaison.gateway import build_default_gateway
 from liaison.orchestrator import Orchestrator, Tool
-from liaison.schemas import SourceKind
+from liaison.schemas import Evidence, SourceKind
+
+_DEMO_NAME_TO_ID = {"acme": 1, "globex": 2}
 
 _DEMO_DOCS = [
     Document(
@@ -67,19 +73,45 @@ def build_demo_engine() -> Engine:
     return engine
 
 
-def build_orchestrator() -> Orchestrator:
-    """Assemble un orchestrateur demo cable sur les connecteurs SQL et GED."""
+def _api_runner(api_connector: ApiConnector, question: str) -> Evidence:
+    """Resout le client cible puis croise fiche client et tickets ouverts."""
+    customer_id = extract_customer_id(question, _DEMO_NAME_TO_ID)
+    if customer_id is None:
+        return Evidence(kind=SourceKind.API, summary="aucun client identifie dans la question")
+    customer = api_connector.get_customer(customer_id)
+    tickets = api_connector.list_open_tickets(customer_id)
+    return Evidence(
+        kind=SourceKind.API,
+        summary=f"{customer.summary}; {tickets.summary}",
+        payload={**customer.payload, **tickets.payload},
+    )
+
+
+def build_orchestrator(api_client: httpx.Client | None = None) -> Orchestrator:
+    """Assemble un orchestrateur demo cable sur les connecteurs SQL, API (ERP/CRM) et GED.
+
+    Le client HTTP de l'ERP peut etre injecte (tests) ; sinon il pointe sur ``erp_base_url``.
+    """
     gateway = build_default_gateway()
     sql_connector = SqlConnector(build_demo_engine(), SemanticLayer(_DEMO_TABLES), gateway)
     docs_connector = DocsConnector(InMemoryRetriever(_DEMO_DOCS))
+    client = api_client or httpx.Client(base_url=get_settings().erp_base_url, timeout=10.0)
+    api_connector = ApiConnector(client)
 
     tools = [
         Tool(
             name="sql",
             description="Interroge la base metier (encours, tickets) en text-to-SQL gouverne.",
-            keywords=frozenset({"encours", "balance", "montant", "facture", "client", "ticket"}),
+            keywords=frozenset({"encours", "balance", "montant", "facture"}),
             runner=lambda q: sql_connector.query(q),
             source_kind=SourceKind.SQL,
+        ),
+        Tool(
+            name="api",
+            description="Consulte l'ERP/CRM (fiche client, tickets ouverts).",
+            keywords=frozenset({"client", "ticket", "litige", "statut", "compte"}),
+            runner=lambda q: _api_runner(api_connector, q),
+            source_kind=SourceKind.API,
         ),
         Tool(
             name="docs",
