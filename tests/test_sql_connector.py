@@ -54,20 +54,20 @@ def test_guard_rejects_multiple_statements() -> None:
         guard.validate("SELECT 1; DROP TABLE customers")
 
 
-def test_connector_executes_generated_sql(business_engine: Engine) -> None:
+async def test_connector_executes_generated_sql(business_engine: Engine) -> None:
     gateway = make_gateway("```sql\nSELECT balance FROM customers WHERE id = 1\n```")
     connector = SqlConnector(business_engine, _LAYER, gateway)
 
-    evidence = connector.query("quel est l'encours du client 1 ?")
+    evidence = await connector.query("quel est l'encours du client 1 ?")
 
     assert evidence.kind == SourceKind.SQL
     assert "1250.0" in evidence.payload["rows"]
     assert evidence.payload["sql"] == "SELECT balance FROM customers WHERE id = 1"
 
 
-def test_connector_blocks_unsafe_generated_sql(business_engine: Engine) -> None:
+async def test_connector_blocks_unsafe_generated_sql(business_engine: Engine) -> None:
     gateway = make_gateway("DROP TABLE customers")
     connector = SqlConnector(business_engine, _LAYER, gateway)
 
     with pytest.raises(SqlGovernanceError):
-        connector.query("supprime les clients")
+        await connector.query("supprime les clients")

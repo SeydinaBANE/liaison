@@ -23,7 +23,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+qdrant = ["qdrant-client>=1.13"]
 dev = [
+    "liaison[qdrant]",
     "ruff>=0.7",
     "mypy>=1.13",
     "pre-commit>=4.0",

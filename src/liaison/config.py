@@ -15,7 +15,6 @@ class Settings(BaseSettings):
         env_prefix="LIAISON_",
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",
     )
 
     env: str = "local"
@@ -34,6 +33,25 @@ class Settings(BaseSettings):
     )
 
     erp_base_url: str = "http://localhost:9000"
+    qdrant_url: str = ""
+    qdrant_collection: str = "liaison"
+
+    api_keys: tuple[str, ...] = Field(
+        default=("dev-key-viewer:viewer", "dev-key-operator:operator"),
+        description="colon-separated key:role pairs",
+    )
+
+    @property
+    def api_key_mapping(self) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        for entry in self.api_keys:
+            if ":" in entry:
+                key, role = entry.split(":", 1)
+                mapping[key] = role
+        return mapping
+
+    rate_limit_max_requests: int = 60
+    rate_limit_window_sec: int = 60
 
 
 @lru_cache(maxsize=1)

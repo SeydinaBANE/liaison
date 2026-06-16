@@ -17,9 +17,14 @@ class ScriptedProvider:
         self.model = model
         self._reply = reply
 
-    def complete(self, request: LLMRequest) -> str:
+    async def complete(self, request: LLMRequest) -> str:
         del request
         return self._reply
+
+    async def stream(self, request: LLMRequest):  # type: ignore[return]  # noqa
+        del request
+        for word in self._reply.split():
+            yield word
 
 
 def make_gateway(reply: str) -> LLMGateway:
