@@ -1,13 +1,15 @@
-"""Connecteur SQL : text-to-SQL gouverne sur une base metier existante.
+"""Connecteur SQL asynchrone : text-to-SQL gouverne sur une base metier existante.
 
 Le LLM ne touche jamais la base directement. Il propose une requete a partir d'une couche
 semantique (descriptions de tables/colonnes), puis un garde-fou (``SqlGuard``) valide la
 requete avant execution : statement unique, lecture seule par defaut, tables en allow-list,
-mots-cles dangereux interdits.
+mots-cles dangereux interdits. L'execution SQL reste synchrone, encapsulee dans
+``asyncio.to_thread`` pour ne pas bloquer la boucle d'evenements.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 
@@ -117,17 +119,21 @@ class SqlConnector:
             ]
         )
 
-    def generate_sql(self, question: str) -> str:
+    async def generate_sql(self, question: str) -> str:
         """Genere et valide une requete SQL a partir d'une question en langage naturel."""
         with record_span("sql.generate"):
-            raw = self._gateway.complete(self._build_prompt(question)).content
+            raw = (await self._gateway.complete(self._build_prompt(question))).content
         return self._guard.validate(_extract_sql(raw))
 
-    def query(self, question: str) -> Evidence:
-        """Genere, valide, execute la requete et retourne une evidence citable."""
-        sql = self.generate_sql(question)
+    def _execute_query(self, sql: str) -> list[dict[str, object]]:
+        """Execute une requete SQL (synchrone, lancee dans un thread)."""
         with record_span("sql.execute", sql=sql), self._engine.connect() as conn:
-            rows = [dict(r) for r in conn.execute(text(sql)).mappings()]
+            return [dict(r) for r in conn.execute(text(sql)).mappings()]
+
+    async def query(self, question: str) -> Evidence:
+        """Genere, valide, execute la requete et retourne une evidence citable."""
+        sql = await self.generate_sql(question)
+        rows = await asyncio.to_thread(self._execute_query, sql)
         METRICS.incr("sql.query.success")
         return Evidence(
             kind=SourceKind.SQL,

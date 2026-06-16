@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from liaison.config import get_settings
 from liaison.connectors.api import ApiConnector
-from liaison.connectors.docs import DocsConnector, Document, InMemoryRetriever
+from liaison.connectors.docs import DocsConnector, Document, InMemoryRetriever, QdrantRetriever
 from liaison.connectors.sql import SemanticLayer, SqlConnector, TableSchema
 from liaison.entities import extract_customer_id
 from liaison.gateway import build_default_gateway
@@ -21,6 +21,9 @@ from liaison.orchestrator import Orchestrator, Tool
 from liaison.schemas import Evidence, SourceKind
 
 _DEMO_NAME_TO_ID = {"acme": 1, "globex": 2}
+
+_clients: list[httpx.AsyncClient] = []
+_engines: list[Engine] = []
 
 _DEMO_DOCS = [
     Document(
@@ -49,8 +52,18 @@ _DEMO_TABLES = [
 ]
 
 
-def build_demo_engine() -> Engine:
-    """Cree un engine SQLite en memoire seede pour la demo locale."""
+def _build_engine() -> Engine:
+    """Cree l'engine SQL selon la configuration : Postgres si DSN renseigne, sinon SQLite demo."""
+    cfg = get_settings()
+    if cfg.sql_dsn and not cfg.sql_dsn.startswith("postgresql+psycopg://liaison:liaison@localhost"):
+        engine = create_engine(
+            cfg.sql_dsn,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,
+        )
+        _engines.append(engine)
+        return engine
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -73,13 +86,13 @@ def build_demo_engine() -> Engine:
     return engine
 
 
-def _api_runner(api_connector: ApiConnector, question: str) -> Evidence:
+async def _api_runner(api_connector: ApiConnector, question: str) -> Evidence:
     """Resout le client cible puis croise fiche client et tickets ouverts."""
     customer_id = extract_customer_id(question, _DEMO_NAME_TO_ID)
     if customer_id is None:
         return Evidence(kind=SourceKind.API, summary="aucun client identifie dans la question")
-    customer = api_connector.get_customer(customer_id)
-    tickets = api_connector.list_open_tickets(customer_id)
+    customer = await api_connector.get_customer(customer_id)
+    tickets = await api_connector.list_open_tickets(customer_id)
     return Evidence(
         kind=SourceKind.API,
         summary=f"{customer.summary}; {tickets.summary}",
@@ -87,15 +100,26 @@ def _api_runner(api_connector: ApiConnector, question: str) -> Evidence:
     )
 
 
-def build_orchestrator(api_client: httpx.Client | None = None) -> Orchestrator:
-    """Assemble un orchestrateur demo cable sur les connecteurs SQL, API (ERP/CRM) et GED.
+async def _build_retriever() -> QdrantRetriever | InMemoryRetriever:
+    """Retourne un retriever Qdrant si configure, sinon InMemoryRetriever demo."""
+    cfg = get_settings()
+    if cfg.qdrant_url:
+        return QdrantRetriever(url=cfg.qdrant_url, collection=cfg.qdrant_collection)
+    return InMemoryRetriever(_DEMO_DOCS)
 
-    Le client HTTP de l'ERP peut etre injecte (tests) ; sinon il pointe sur ``erp_base_url``.
+
+async def build_orchestrator(api_client: httpx.AsyncClient | None = None) -> Orchestrator:
+    """Assemble un orchestrateur cable sur les connecteurs SQL, API (ERP/CRM) et GED.
+
+    En production (DSN non-local), utilise Postgres et Qdrant. En local, SQLite seede + memoire.
+    Le client HTTP peut etre injecte (tests).
     """
     gateway = build_default_gateway()
-    sql_connector = SqlConnector(build_demo_engine(), SemanticLayer(_DEMO_TABLES), gateway)
-    docs_connector = DocsConnector(InMemoryRetriever(_DEMO_DOCS))
-    client = api_client or httpx.Client(base_url=get_settings().erp_base_url, timeout=10.0)
+    sql_connector = SqlConnector(_build_engine(), SemanticLayer(_DEMO_TABLES), gateway)
+    retriever = await _build_retriever()
+    docs_connector = DocsConnector(retriever)
+    client = api_client or httpx.AsyncClient(base_url=get_settings().erp_base_url, timeout=10.0)
+    _clients.append(client)
     api_connector = ApiConnector(client)
 
     tools = [
@@ -103,7 +127,7 @@ def build_orchestrator(api_client: httpx.Client | None = None) -> Orchestrator:
             name="sql",
             description="Interroge la base metier (encours, tickets) en text-to-SQL gouverne.",
             keywords=frozenset({"encours", "balance", "montant", "facture"}),
-            runner=lambda q: sql_connector.query(q),
+            runner=sql_connector.query,
             source_kind=SourceKind.SQL,
         ),
         Tool(
@@ -117,8 +141,18 @@ def build_orchestrator(api_client: httpx.Client | None = None) -> Orchestrator:
             name="docs",
             description="Recherche dans la GED (contrats, procedures).",
             keywords=frozenset({"contrat", "clause", "procedure", "penalite", "litige"}),
-            runner=lambda q: docs_connector.search(q),
+            runner=docs_connector.search,
             source_kind=SourceKind.DOCS,
         ),
     ]
     return Orchestrator(gateway, tools)
+
+
+async def _cleanup() -> None:
+    """Ferme toutes les ressources acquises (clients HTTP async, engines DB)."""
+    while _clients:
+        client = _clients.pop()
+        await client.aclose()
+    while _engines:
+        engine = _engines.pop()
+        engine.dispose()
