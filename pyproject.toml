@@ -28,7 +28,7 @@ dev = [
     "liaison[qdrant]",
     "ruff>=0.7",
     "mypy>=1.13",
-    "pre-commit>=4.0",
+    "pre-commit>=4.6.0",
     "detect-secrets>=1.5",
     "pip-audit>=2.7",
 ]
