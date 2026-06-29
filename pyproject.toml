@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-qdrant = ["qdrant-client>=1.13"]
+qdrant = ["qdrant-client>=1.18.0"]
 dev = [
     "liaison[qdrant]",
     "ruff>=0.15.18",
