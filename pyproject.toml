@@ -30,7 +30,7 @@ dev = [
     "mypy>=1.13",
     "pre-commit>=4.6.0",
     "detect-secrets>=1.5",
-    "pip-audit>=2.7",
+    "pip-audit>=2.10.1",
 ]
 test = [
     "pytest>=8.3",
