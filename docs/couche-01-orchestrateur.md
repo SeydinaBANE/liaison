@@ -1,6 +1,6 @@
 # Couche 01 — Orchestrateur
 
-`src/liaison/orchestrator.py`
+`src/liaison/application/orchestrator.py` (use case), `src/liaison/domain/routing.py` (`Tool`/`Router`)
 
 ## Role
 Coordonne le cycle **routage → execution → synthese** pour une question metier.

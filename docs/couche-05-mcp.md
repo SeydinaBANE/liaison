@@ -1,6 +1,6 @@
 # Couche 05 — Exposition MCP
 
-`src/liaison/mcp.py`
+`src/liaison/adapters/inbound/mcp/registry.py`
 
 ## Role
 Exposer les connecteurs comme outils standard **MCP (Model Context Protocol)**.

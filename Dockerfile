@@ -24,4 +24,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
 
-CMD ["uvicorn", "liaison.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "liaison.adapters.inbound.http.api:app", "--host", "0.0.0.0", "--port", "8000"]
