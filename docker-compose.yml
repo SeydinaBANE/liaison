@@ -30,7 +30,7 @@ services:
 
   mock-erp:
     build: .
-    command: ["uvicorn", "liaison.connectors.mock_erp:app", "--host", "0.0.0.0", "--port", "9000"]
+    command: ["uvicorn", "liaison.demo.mock_erp:app", "--host", "0.0.0.0", "--port", "9000"]
     ports:
       - "9000:9000"
     restart: unless-stopped

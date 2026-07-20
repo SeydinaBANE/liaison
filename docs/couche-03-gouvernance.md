@@ -1,6 +1,6 @@
 # Couche 03 — Gouvernance
 
-`src/liaison/governance.py`
+`src/liaison/domain/governance.py`
 
 Couche transverse appliquee autour des connecteurs et au niveau de l'API.
 

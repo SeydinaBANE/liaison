@@ -43,21 +43,27 @@ Postgres metier     Mock ERP / SI reel    Qdrant / docs
          +--- Transverse : gateway LLM (fallback), observabilite ---+
 ```
 
-## Modules (`src/liaison/`)
+## Modules (`src/liaison/`) — architecture hexagonale
 
 | Module | Role |
 |---|---|
-| `orchestrator.py` | Routage par mots-cles, execution resiliente, synthese sourcee |
-| `connectors/sql.py` | Couche semantique + `SqlGuard` + execution lecture seule |
-| `connectors/api.py` | Appels ERP/CRM, write-back idempotent |
-| `connectors/docs.py` | RAG documentaire (retriever abstrait) |
-| `connectors/mock_erp.py` | ERP/CRM de demonstration (FastAPI) |
-| `governance.py` | RBAC, `mask_pii`, `IdempotencyGuard`, `AuditLog` |
-| `gateway.py` | Abstraction fournisseur LLM + fallback primaire/secondaire |
-| `observability.py` | Spans chronometres + compteurs (abstraction Langfuse/Prometheus) |
-| `mcp.py` | Registre d'outils au format MCP |
+| `domain/routing.py` | `Tool`/`Router` : routage par mots-cles (regle pure) |
+| `application/orchestrator.py` | Execution resiliente des outils, synthese sourcee |
+| `domain/sql_policy.py` | Couche semantique + `SqlGuard` (regles pures) |
+| `application/sql_service.py` | Text-to-SQL gouverne (utilise `ports.sql_executor`) |
+| `application/api_service.py` | Appels ERP/CRM, write-back idempotent (utilise `ports.erp_gateway`) |
+| `application/docs_service.py` | RAG documentaire (utilise `ports.retriever`) |
+| `adapters/outbound/sql/sqlalchemy_executor.py` | Execution SQL lecture seule (SQLAlchemy) |
+| `adapters/outbound/erp/http_gateway.py` | Client HTTP vers l'ERP/CRM (httpx) |
+| `adapters/outbound/retriever/` | `InMemoryRetriever` (demo) / `QdrantRetriever` (prod) |
+| `demo/mock_erp.py` | ERP/CRM de demonstration (FastAPI), hors hexagone |
+| `domain/governance.py` | RBAC, `mask_pii`, `IdempotencyGuard`, `AuditLog` |
+| `application/llm_gateway.py` | Fallback primaire/secondaire (utilise `ports.llm`) |
+| `adapters/outbound/llm/` | `LocalProvider` (demo) / `HttpLLMProvider` (prod) |
+| `platform/observability.py` | Spans chronometres + compteurs (abstraction Langfuse/Prometheus) |
+| `adapters/inbound/mcp/registry.py` | Registre d'outils au format MCP |
 | `services.py` | Composition root (assemblage demo en-process) |
-| `api.py` | Endpoints sante + chat (REST/SSE) sous controle RBAC |
+| `adapters/inbound/http/api.py` | Endpoints sante + chat (REST/SSE) sous controle RBAC |
 
 ## Principes de conception
 

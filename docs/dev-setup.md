@@ -23,7 +23,7 @@ make precommit-all # tous les hooks
 ## Lancer l'API en local (sans Docker)
 ```bash
 . .venv/bin/activate
-uvicorn liaison.api:app --reload
+uvicorn liaison.adapters.inbound.http.api:app --reload
 # http://localhost:8000/docs
 ```
 L'assemblage par defaut est en-process (SQLite seede + GED memoire) : l'API demarre sans
