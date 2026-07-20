@@ -6,8 +6,8 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
-from liaison.connectors.mock_erp import app
-from liaison.schemas import SourceKind
+from liaison.demo.mock_erp import app
+from liaison.domain.models import SourceKind
 from liaison.services import _cleanup, build_orchestrator
 
 _ERPTRANSPORT = ASGITransport(app=app)

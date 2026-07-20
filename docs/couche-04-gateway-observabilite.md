@@ -1,6 +1,8 @@
 # Couche 04 — Gateway LLM & Observabilite
 
-`src/liaison/gateway.py`, `src/liaison/observability.py`
+`src/liaison/application/llm_gateway.py`, `src/liaison/ports/llm.py`,
+`src/liaison/adapters/outbound/llm/{local_provider,http_provider}.py`,
+`src/liaison/platform/observability.py`
 
 ## Gateway
 - `LLMProvider` (Protocol) : contrat minimal `complete(request) -> str`.

@@ -2,7 +2,8 @@
 
 L'assemblage par defaut est entierement en-process (SQLite seede + GED en memoire) afin que
 l'application demarre sans dependance externe ; en production on injecte un engine Postgres
-et un retriever Qdrant.
+et un retriever Qdrant. C'est le seul endroit du code qui choisit une implementation
+concrete (adapter) pour chaque port, selon la configuration.
 """
 
 from __future__ import annotations
@@ -11,14 +12,22 @@ import httpx
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import StaticPool
 
-from liaison.config import get_settings
-from liaison.connectors.api import ApiConnector
-from liaison.connectors.docs import DocsConnector, Document, InMemoryRetriever, QdrantRetriever
-from liaison.connectors.sql import SemanticLayer, SqlConnector, TableSchema
-from liaison.entities import extract_customer_id
-from liaison.gateway import build_default_gateway
-from liaison.orchestrator import Orchestrator, Tool
-from liaison.schemas import Evidence, SourceKind
+from liaison.adapters.outbound.erp.http_gateway import HttpErpGateway
+from liaison.adapters.outbound.llm.http_provider import HttpLLMProvider
+from liaison.adapters.outbound.llm.local_provider import LocalProvider
+from liaison.adapters.outbound.retriever.in_memory import InMemoryRetriever
+from liaison.adapters.outbound.retriever.qdrant import QdrantRetriever
+from liaison.adapters.outbound.sql.sqlalchemy_executor import SQLAlchemyExecutor
+from liaison.application.api_service import ApiConnector
+from liaison.application.docs_service import DocsConnector
+from liaison.application.llm_gateway import LLMGateway
+from liaison.application.orchestrator import Orchestrator
+from liaison.application.sql_service import SqlConnector
+from liaison.domain.models import SourceKind
+from liaison.domain.routing import Tool
+from liaison.domain.sql_policy import SemanticLayer, TableSchema
+from liaison.platform.config import Settings, get_settings
+from liaison.ports.retriever import Document
 
 _DEMO_NAME_TO_ID = {"acme": 1, "globex": 2}
 
@@ -86,26 +95,40 @@ def _build_engine() -> Engine:
     return engine
 
 
-async def _api_runner(api_connector: ApiConnector, question: str) -> Evidence:
-    """Resout le client cible puis croise fiche client et tickets ouverts."""
-    customer_id = extract_customer_id(question, _DEMO_NAME_TO_ID)
-    if customer_id is None:
-        return Evidence(kind=SourceKind.API, summary="aucun client identifie dans la question")
-    customer = await api_connector.get_customer(customer_id)
-    tickets = await api_connector.list_open_tickets(customer_id)
-    return Evidence(
-        kind=SourceKind.API,
-        summary=f"{customer.summary}; {tickets.summary}",
-        payload={**customer.payload, **tickets.payload},
-    )
-
-
 async def _build_retriever() -> QdrantRetriever | InMemoryRetriever:
     """Retourne un retriever Qdrant si configure, sinon InMemoryRetriever demo."""
     cfg = get_settings()
     if cfg.qdrant_url:
         return QdrantRetriever(url=cfg.qdrant_url, collection=cfg.qdrant_collection)
     return InMemoryRetriever(_DEMO_DOCS)
+
+
+def _build_async_http_client(cfg: Settings) -> httpx.AsyncClient:
+    """Construit le client HTTP async du provider LLM."""
+    headers = {"Authorization": f"Bearer {cfg.llm_api_key}"} if cfg.llm_api_key else {}
+    return httpx.AsyncClient(base_url=cfg.llm_api_base, headers=headers, timeout=30.0)
+
+
+def build_default_gateway(
+    settings: Settings | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> LLMGateway:
+    """Construit le gateway selon la configuration.
+
+    Si ``llm_api_base`` est renseigne, utilise un provider HTTP reel (primaire + fallback) ;
+    sinon, retombe sur ``LocalProvider`` deterministe pour fonctionner hors-ligne.
+    """
+    cfg = settings or get_settings()
+    if not cfg.llm_api_base:
+        return LLMGateway(
+            primary=LocalProvider(model=cfg.llm_model_primary),
+            fallback=LocalProvider(model=cfg.llm_model_fallback),
+        )
+    client = http_client or _build_async_http_client(cfg)
+    return LLMGateway(
+        primary=HttpLLMProvider(model=cfg.llm_model_primary, client=client),
+        fallback=HttpLLMProvider(model=cfg.llm_model_fallback, client=client),
+    )
 
 
 async def build_orchestrator(api_client: httpx.AsyncClient | None = None) -> Orchestrator:
@@ -115,12 +138,13 @@ async def build_orchestrator(api_client: httpx.AsyncClient | None = None) -> Orc
     Le client HTTP peut etre injecte (tests).
     """
     gateway = build_default_gateway()
-    sql_connector = SqlConnector(_build_engine(), SemanticLayer(_DEMO_TABLES), gateway)
+    executor = SQLAlchemyExecutor(_build_engine())
+    sql_connector = SqlConnector(executor, SemanticLayer(_DEMO_TABLES), gateway)
     retriever = await _build_retriever()
     docs_connector = DocsConnector(retriever)
     client = api_client or httpx.AsyncClient(base_url=get_settings().erp_base_url, timeout=10.0)
     _clients.append(client)
-    api_connector = ApiConnector(client)
+    api_connector = ApiConnector(HttpErpGateway(client), _DEMO_NAME_TO_ID)
 
     tools = [
         Tool(
@@ -134,7 +158,7 @@ async def build_orchestrator(api_client: httpx.AsyncClient | None = None) -> Orc
             name="api",
             description="Consulte l'ERP/CRM (fiche client, tickets ouverts).",
             keywords=frozenset({"client", "ticket", "litige", "statut", "compte"}),
-            runner=lambda q: _api_runner(api_connector, q),
+            runner=api_connector.answer,
             source_kind=SourceKind.API,
         ),
         Tool(

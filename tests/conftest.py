@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import StaticPool
 
-from liaison.gateway import LLMGateway
-from liaison.schemas import LLMRequest
+from liaison.application.llm_gateway import LLMGateway
+from liaison.domain.models import LLMRequest
 
 
 class ScriptedProvider:
